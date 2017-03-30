@@ -121,7 +121,7 @@ void read_csv(const char filename[], double **array, int data_size, int batch_si
             if (i >= batch_ind && i < batch_ind + batch_size) {
                 /* Parse the comma-separated values from each line into 'array'. */
                 for (j = 0, ptr = buffer; j < data_size; j++, ptr++) {
-                    array[i][j] = (int) strtol(ptr, &ptr, 10);
+                    array[i][j] = strtol(ptr, &ptr, 10);
                 }
             }
         }
