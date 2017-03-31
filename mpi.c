@@ -64,10 +64,10 @@ void forward(double *input, int inputSize, double *output, int outputSize, doubl
 
     for (int i = 0; i < outputSize; i++) {
         // Initialize output with the bias term
-        output[i] = param[inputSize * i];
+        output[i] = param[(inputSize +1)* i];
         for (int j = 0; j < inputSize; j++) {
             // Add weighted inputs
-            output[i] += param[inputSize * i + j] * input[j];
+            output[i] += param[(inputSize +1)* i + j+1] * input[j];
         }
         output[i] = tanh(output[i]);
     }
