@@ -58,8 +58,8 @@ int dataInd(int layer, int p, int P, int *layerSize, int Nlayers) {
 }
 
 
-/* This is correct only for binary classification ... */
-void forward(double *input, int inputSize, double *output, int outputSize, double *param) {
+/* Forward pass */
+void forward(double *input, int inputSize, double *output, int outputSize, double *param, int fun) {
     // number of parameters = (inputSize +1) * outputSize;
 
     for (int i = 0; i < outputSize; i++) {
@@ -69,7 +69,9 @@ void forward(double *input, int inputSize, double *output, int outputSize, doubl
             // Add weighted inputs
             output[i] += param[(inputSize +1)* i + j+1] * input[j];
         }
-        output[i] = tanh(output[i]);
+        if (fun > 0) {
+            output[i] = tanh(output[i]);
+        }
     }
 }
 
@@ -93,7 +95,7 @@ void train(int *layerSize, int * localLayerSize, int Nlayers, int p, int P) {
                 int inputPointer = dataInd(layer-1, 0, P, layerSize, Nlayers);
                 int outputPointer = dataInd(layer, p, P, layerSize, Nlayers);
                 int paramPointer = paramInd(layer, p, P, layerSize, Nlayers);
-                forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer);
+                forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer,Nlayers-layer-1);
                 MPI_ALL_TO_ALL(data[outputPointer], local(layerSize[layer],p,P));
             }
             softmax();
