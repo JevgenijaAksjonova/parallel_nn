@@ -71,13 +71,20 @@ void forward(double *input, int inputSize, double *output, int outputSize, doubl
         }
         if (fun > 0) {
             output[i] = tanh(output[i]);
+        } 
+    }
+    
+    /* softmax for the last layer */
+    if (fun == 0) {
+        double sum = 0.0;
+        for (int i = 0; i < outputSize; i++) { 
+            sum += exp(output[i]);
+        }
+        for (int i = 0; i < outputSize; i++) { 
+            output[i] = exp(output[i])/sum;
         }
     }
-}
-
-void softmax(double *output, int outputSize) {
-    // use one-hot encoding 
-    // need parameter matrix (one param per class..)
+    
 }
 
 void backward() {
@@ -98,7 +105,6 @@ void train(int *layerSize, int * localLayerSize, int Nlayers, int p, int P) {
                 forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer,Nlayers-layer-1);
                 MPI_ALL_TO_ALL(data[outputPointer], local(layerSize[layer],p,P));
             }
-            softmax();
             for (layer = 1; layer < 3; layer++) {
                 backward(layer);
                 MPI_ALL_TO_ALL(data[layer], data[]);
