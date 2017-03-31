@@ -105,8 +105,11 @@ void train(int *layerSize, int * localLayerSize, int Nlayers, int p, int P) {
                 forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer,Nlayers-layer-1);
                 MPI_ALL_TO_ALL(data[outputPointer], local(layerSize[layer],p,P));
             }
-            for (layer = 1; layer < 3; layer++) {
-                backward(layer);
+            for (layer = Nlayers-1; layer > 0; layer--) {
+                int inputPointer = dataInd(layer-1, 0, P, layerSize, Nlayers);
+                int outputPointer = dataInd(layer, p, P, layerSize, Nlayers);
+                int paramPointer = paramInd(layer, p, P, layerSize, Nlayers);
+                backward(data+inputPointer,layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer,Nlayers-layer-1);
                 MPI_ALL_TO_ALL(data[layer], data[]);
             }
         }
