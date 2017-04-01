@@ -64,7 +64,7 @@ void forward(double *input, int inputSize, double *output, int outputSize, doubl
 
     for (int i = 0; i < outputSize; i++) {
         // Initialize output with the bias term
-        output[i] = param[(inputSize +1)* i];
+        output[i] = param[(inputSize +1)* i]; // todo check this is correct
         for (int j = 0; j < inputSize; j++) {
             // Add weighted inputs
             output[i] += param[(inputSize +1)* i + j+1] * input[j];
@@ -80,47 +80,99 @@ void forward(double *input, int inputSize, double *output, int outputSize, doubl
         for (int i = 0; i < outputSize; i++) { 
             sum += exp(output[i]);
         }
-        for (int i = 0; i < outputSize; i++) { 
+        for (int i = 0; i < outputSize; i++) {
+            /* Compute normalized probability of the correct class */
             output[i] = exp(output[i])/sum;
+
         }
     }
     
 }
 
-/* the cross-entropy loss plus a regularization term on the parameters */
-double compute_loss() {
-
+/* Compute the cross-entropy loss plus a L2 regularization term on the parameters */
+double compute_loss(double *probs, double *param, int label, int num_param, int batch_size, double lambda) { // int *labels
+    double local_loss = 0;
+    /* Add the log probabilities assigned to the correct classes */
+    //for (int i = 0 ; i < batch_size; i++) {
+    local_loss = (1 / batch_size) * -log(probs[label]);
+    // Add the L2
+    for (int i = 0; i < num_param; i++) {
+        local_loss += lambda * pow(param[i], 2);
+    }
+    //}
+    return local_loss;
 }
 
 
-/* Backward pass */
-void backward() {
-    // Goal: minimize the cross-entropy loss plus a regularization term on the parameters
+/* Backward pass and parameter update */
+void backward(double *input, int inputSize, double *output, int outputSize, int fun, int learning_rate) {
     // using mini-batch (stochastic) gradient descent
 
+    double local_grad[outputSize] = {0};
+
+    // Backprop the weighted sum // todo need to access weights from other processes
+
+    // for ..
+        // for ..
+            // local_grad[] = output[] * input[]
+
+
+    // Backprop the tanh activation function (everywhere except last layer)
+    if (fun != 0) {
+        for (int i = 0; i < outputSize; i++) {
+            local_grad[i] = 1 - pow(tanh(local_grad[i]),2);
+        }
+    }
+
+    // Update parameters
+    for (int i = 0; i < outputSize; i++) {
+        output[i] += - learning_rate * local_grad[i];
+    }
 }
 
-void train(double *data, double *param, int *layerSize, int *localLayerSize, int Nlayers, int p, int P) {
+void train(double *data, int label, double *param, int *layerSize, int *localLayerSize, int Nlayers, int p, int P, int batch_size, double lambda, double learning_rate) {
     int it, itTotal = 0, layer;
-    double error;
-    while (itTotal++ < MAX_ITER && error > TOL) {
+    double local_loss, global_loss = 1;
+    while (itTotal++ < MAX_ITER && global_loss > TOL) {
+
         for (it = 0; it < NUM_IT_PER_TEST; it++) {
+            /* Forward pass */
             for (layer = 1; layer < Nlayers; layer++) {
                 int inputPointer = dataInd(layer-1, 0, P, layerSize);
                 int outputPointer = dataInd(layer, p, P, layerSize);
                 int paramPointer = paramInd(layer, p, P, layerSize);
-                forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer,Nlayers-layer-1);
-                MPI_Alltoall(data[outputPointer], local(layerSize[layer],p,P));
+                forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer, Nlayers-layer-1);
+                MPI_Alltoall(data+outputPointer, local(layerSize[layer],p,P), MPI_DOUBLE, data+dataInd(layer+1, p, P, layerSize),);
             }
-            error = compute_loss();
-            printf("loss: ");
 
-            for (layer = Nlayers-1; layer > 0; layer--) {
-                int inputPointer = dataInd(layer-1, 0, P, layerSize);
-                int outputPointer = dataInd(layer, p, P, layerSize);
-                int paramPointer = paramInd(layer, p, P, layerSize);
-                backward(data+inputPointer,layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer,Nlayers-layer-1);
-                MPI_Alltoall(data[layer], data[]);
+            /* Loss computation */
+            int probs_pointer = dataInd(Nlayers-1, p, P, layerSize);
+            int num_param = paramSize(layerSize, Nlayers, p, P);
+            local_loss = compute_loss(data + probs_pointer, param, label, num_param, batch_size, lambda); // use lambda = 0 to ignore regularization
+            if (p == 0) {
+                MPI_Reduce(&local_loss, &global_loss, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+                printf("total loss: ");
+            }
+
+            /* Gradient computation for the last (score) layer */
+            double grad[10] = {0};
+            grad[label] -= 1;
+            for (int i = 0; i < 10; i++) {
+                grad[i] += data[dataSize(layerSize, Nlayers)-(10-i)];
+                grad[i] /= batch_size;
+            }
+
+            /* Backpropagation */
+
+            // todo need to access weights from other processes
+
+            backward(grad,layerSize[Nlayers-1], param+paramInd(Nlayers-2, p, P, layerSize), local(layerSize[layer],p,P),Nlayers-layer-1, learning_rate);
+
+            for (layer = Nlayers-2; layer > 0; layer--) {
+                int inputPointer = paramInd(layer, 0, P, layerSize); // start index of backprop gradients
+                int outputPointer = paramInd(layer-1, p, P, layerSize); // start index of current gradients (to be updated)
+                backward(param+inputPointer,layerSize[layer], param+outputPointer, local(layerSize[layer-1],p,P), Nlayers-layer-1, learning_rate);
+                //MPI_Alltoall(data[layer], data[]); ???
             }
         }
     }
@@ -157,7 +209,6 @@ int main(int argc, char **argv) {
 /* local variables */
     int p, P;
     int N, W = 20, H = 20;
-    double *param;// *data;
     MPI_Status status;
     int tag = 100;
     const char filename[] = "/path/train_images.csv";
@@ -180,20 +231,23 @@ int main(int argc, char **argv) {
     int batch_index = 0;
     int Nlayers = 4;
     int layerSize[4] = {W*H,50*50,50*50,10};
+    double *param;// *grad;
+    int label; //int *labels;
+    double **data;
 
 /* Allocate memory for parameters */
     param = (double *) malloc(paramSize(layerSize, Nlayers, p, P) * sizeof(double));
+    //grad = (double *) malloc(paramSize(layerSize, Nlayers, p, P) * sizeof(double));
 
 /* Initialize a (pseudo-) random number generator */
     srandom(p + 1);
 
 /* Initialize parameters as small random values */
-    for (int i = 0; i < paramSize(layerSize, Nlayers, p, P); i++)
+    for (int i = 0; i < paramSize(layerSize, Nlayers, p, P); i++) {
         param[i] = 0.01 * (double) random() / RAND_MAX;
+    }
 
     //data = (double *) malloc(dataSize(layerSize,Nlayers)*sizeof(double));
-
-    double **data;
 
 /* Allocate array */
     data = malloc(N + sizeof(*data));
