@@ -109,13 +109,11 @@ void backward(double *current_layer, int local_layer_size, double *above_layer, 
               double *param, double learning_rate, double lambda) {
     // using mini-batch (stochastic) gradient descent
 
-    double local_sum, local_grad, dparam, above_grad = 0;
+    double local_grad, dparam, above_grad = 0;
 
     for (int i = 0; i < local_layer_size; i++) { // only local layer
-        // Compute value of node before activation
-        local_sum = atanh(current_layer[i]);
         // Compute local gradient (backpropagate the tanh activation function)
-        local_grad = 1 - pow(tanh(local_sum),2);
+        local_grad = 1 - pow(current_layer[i],2);
         // Sum local gradients from above
         for (int j = 0; j < above_layer_size; j++) { // entire next layer
             above_grad += current_layer[i] * above_layer[j];
