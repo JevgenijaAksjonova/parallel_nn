@@ -105,28 +105,35 @@ double compute_loss(double *probs, double *param, int label, int num_param, int 
 
 
 /* Backward pass and parameter update */
-void backward(double *input, int inputSize, double *output, int outputSize, int fun, int learning_rate) {
+void backward(double *current_layer, int local_layer_size, double *above_layer, int above_layer_size, int below_layer_size,
+              double *param, double learning_rate, double lambda) {
     // using mini-batch (stochastic) gradient descent
 
-    double local_grad[outputSize] = {0};
+    double local_sum, local_grad, dparam, above_grad = 0;
 
-    // Backprop the weighted sum // todo need to access weights from other processes
-
-    // for ..
-        // for ..
-            // local_grad[] = output[] * input[]
-
-
-    // Backprop the tanh activation function (everywhere except last layer)
-    if (fun != 0) {
-        for (int i = 0; i < outputSize; i++) {
-            local_grad[i] = 1 - pow(tanh(local_grad[i]),2);
+    for (int i = 0; i < local_layer_size; i++) { // only local layer
+        // Compute value of node before activation
+        local_sum = atanh(current_layer[i]);
+        // Compute local gradient (backpropagate the tanh activation function)
+        local_grad = 1 - pow(tanh(local_sum),2);
+        // Sum local gradients from above
+        for (int j = 0; j < above_layer_size; j++) { // entire next layer
+            above_grad += current_layer[i] * above_layer[j];
         }
-    }
-
-    // Update parameters
-    for (int i = 0; i < outputSize; i++) {
-        output[i] += - learning_rate * local_grad[i];
+        // Compute local gradient by chain rule and save it in corresponding node
+        current_layer[i] = local_grad * above_grad;
+        // Update parameters
+        for (int k = 0; k < below_layer_size + 1; k++) { // entire previous layer
+            // Add the regularization gradient (unless the parameter is a bias term)
+            if (k > 0) {
+                dparam = current_layer[i] + 2 * lambda * param[(below_layer_size)* i + k];
+            }
+            else {
+                dparam = current_layer[i];
+            }
+            // Perform a parameter update
+            param[(below_layer_size)* i + k] =+ - learning_rate * dparam;
+        }
     }
 }
 
@@ -155,24 +162,28 @@ void train(double *data, int label, double *param, int *layerSize, int *localLay
             }
 
             /* Gradient computation for the last (score) layer */
-            double grad[10] = {0};
+            double grad[layerSize[Nlayers-1]] = {0};
             grad[label] -= 1;
-            for (int i = 0; i < 10; i++) {
-                grad[i] += data[dataSize(layerSize, Nlayers)-(10-i)];
-                grad[i] /= batch_size;
+            for (int i = 0; i < layerSize[Nlayers-1]; i++) {
+                grad[i] += data[dataSize(layerSize, Nlayers) - (layerSize[Nlayers-1] - i)];
+                grad[i] /= batch_size; // todo check lectures why this is necessary
             }
 
             /* Backpropagation */
-
-            // todo need to access weights from other processes
-
-            backward(grad,layerSize[Nlayers-1], param+paramInd(Nlayers-2, p, P, layerSize), local(layerSize[layer],p,P),Nlayers-layer-1, learning_rate);
-
             for (layer = Nlayers-2; layer > 0; layer--) {
-                int inputPointer = paramInd(layer, 0, P, layerSize); // start index of backprop gradients
-                int outputPointer = paramInd(layer-1, p, P, layerSize); // start index of current gradients (to be updated)
-                backward(param+inputPointer,layerSize[layer], param+outputPointer, local(layerSize[layer-1],p,P), Nlayers-layer-1, learning_rate);
-                //MPI_Alltoall(data[layer], data[]); ???
+                int currentPointer = dataInd(layer, p, P, layerSize);
+                int paramPointer = paramInd(layer, p, P, layerSize);
+
+                if (layer == Nlayers-1) {
+                    backward(data+currentPointer, local(layerSize[layer],p,P), grad, layerSize[layer],
+                             layerSize[layer-1], param+paramPointer,learning_rate, lambda);
+                }
+                else {
+                    int abovePointer = dataInd(layer+1, p, P, layerSize);
+                    backward(data+currentPointer, local(layerSize[layer],p,P), data+abovePointer, layerSize[layer+1],
+                             layerSize[layer-1], param+paramPointer,learning_rate, lambda);
+                }
+                MPI_Alltoall(data[layer], data[]); // todo
             }
         }
     }
