@@ -6,9 +6,9 @@
 /* Use MPI */
 #include "mpi.h"
 
-#define MAX_ITER 5
+#define MAX_ITER 30
 #define TOL 0.00000001
-#define NUM_IT_PER_TEST 10
+#define NUM_IT_PER_TEST 20
 
 
 void read_csv(const char filename[], double **array, int data_size, int batch_size, int batch_ind) {
@@ -96,21 +96,8 @@ void forward(double *input, int inputSize, double *output, int outputSize, doubl
             output[i] = tanh(output[i]);
         } 
     }
-    
-    /* softmax for the last layer */
-    if (fun == 0) {
-        double sum = 0.0;
-        for (int i = 0; i < outputSize; i++) { 
-            sum += exp(output[i]);
-        }
-        for (int i = 0; i < outputSize; i++) {
-            /* Compute normalized probability of the correct class */
-            output[i] = exp(output[i])/sum;
-
-        }
-    }
-    
 }
+
 
 /* Compute L2 regularization term on the parameters */
 double compute_regularization_loss(double *param, int num_param, double lambda) {
@@ -123,8 +110,8 @@ double compute_regularization_loss(double *param, int num_param, double lambda) 
 
 
 /* Backward pass and parameter update */
-/* void backward(double *current_layer, int local_layer_size, double *prev_layer, int prev_layer_size,
-              double *param, int layer,double lambda) {
+void backward(double *current_layer, int local_layer_size, double *prev_layer, int prev_layer_size,
+              double *param, double *grad_param, int layer,double lambda) {
     // using mini-batch (stochastic) gradient descent
     // todo add regularization
 
@@ -135,7 +122,7 @@ double compute_regularization_loss(double *param, int num_param, double lambda) 
             grad_param[i*(prev_layer_size +1)+j+1] += current_layer[i] * prev_layer[j];
         }    
     } 
-    if (layer>1) {
+    if (layer > 1) {
         for (int i = 0; i < prev_layer_size; i++) {
             double localGrad = (1-pow(prev_layer[i],2));
             prev_layer[i] = 0.0;
@@ -144,7 +131,7 @@ double compute_regularization_loss(double *param, int num_param, double lambda) 
             }
             prev_layer[i] *= localGrad; 
         } 
-    }*/
+    }
 /*
     double local_grad, dparam, above_grad = 0;
 
@@ -170,7 +157,7 @@ double compute_regularization_loss(double *param, int num_param, double lambda) 
             param[(below_layer_size)* i + k] =+ - learning_rate * dparam;
         }
     }*/
-//}
+}
 
 
 void train(const char filename[], int label, double *param, double *grad_param, int *layerSize, int Nlayers, int p, int P, int batch_size, double lambda, double learning_rate) {
@@ -211,7 +198,7 @@ void train(const char filename[], int label, double *param, double *grad_param, 
                 int lsizes[P],lpointers[P];
                 for (int lp = 0; lp <P; lp++) {
                     lsizes[lp] = local(layerSize[layer],lp,P);
-                    if (i >0 ) {
+                    if (lp >0 ) {
                         lpointers[lp] = lsizes[lp-1]+lpointers[lp-1];
                     } else {
                         lpointers[lp] = 0;
@@ -222,8 +209,19 @@ void train(const char filename[], int label, double *param, double *grad_param, 
                 free(dataMerged);
             }
 
-            /* Loss computation */
+            /* Softmax */
             int probs_pointer = dataInd(Nlayers-1, 0, P, layerSize);
+            double sum = 0.0;
+
+            for (int i = 0; i < layerSize[Nlayers-1]; i++) {
+                sum += exp(data[probs_pointer+i]);
+            }
+            for (int i = 0; i < layerSize[Nlayers-1]; i++) {
+                /* Compute normalized probability of the correct class */
+                data[probs_pointer+i] = exp(data[probs_pointer+i])/sum;
+            }
+
+            /* Loss computation */
             int num_param = paramSize(layerSize, Nlayers, p, P);
 
             /* Compute the cross-entropy loss */
@@ -236,35 +234,28 @@ void train(const char filename[], int label, double *param, double *grad_param, 
             global_loss /= batch_size;
 
             /* Add the regularization loss */
-            local_reg_loss = compute_regularization_loss(param, num_param, lambda); // use lambda = 0 to ignore regularization
+            //local_reg_loss = compute_regularization_loss(param, num_param, lambda); // use lambda = 0 to ignore regularization
             if (p == 0) {
-                MPI_Reduce(&local_reg_loss, &global_reg_loss, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+                //MPI_Reduce(&local_reg_loss, &global_reg_loss, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
                 global_loss += global_reg_loss;
-                printf("\ntotal loss: %f\n", global_loss);
+                printf("total loss: %f\n", global_loss);
             }
-
-            for (int i = 0; i < layerSize[Nlayers-1]; i++) {
-                printf("%3f ", data[probs_pointer+i]);
-            }
-            printf("\n");
 
             /* Gradient computation for the last (score) layer */
             data[probs_pointer+label] -= 1;
             for (int i = 0; i < layerSize[Nlayers-1]; i++) {
                 data[probs_pointer+i] /= batch_size;
-                printf("%3f ", data[probs_pointer+i]);
+                //printf("%3f ", data[probs_pointer+i]);
             }
 
             /* Backpropagation */
-            /*
             for (layer = Nlayers-1; layer > 0; layer--) {
                 int inputPointer = dataInd(layer, p, P, layerSize);
                 int outputPointer = dataInd(layer-1, 0, P, layerSize);
                 int paramPointer = paramInd(layer, p, P, layerSize);
 
-                int abovePointer = dataInd(layer+1, p, P, layerSize);
                 backward(data+inputPointer, local(layerSize[layer],p,P), data+outputPointer, layerSize[layer-1],
-                         param+paramPointer, layer,lambda);
+                         param+paramPointer, grad_param+paramPointer, layer,lambda);
                 if (layer > 1) {
                     double * dataMerged;
                     dataMerged = (double *) malloc(layerSize[layer-1]*sizeof(double));
@@ -273,8 +264,14 @@ void train(const char filename[], int label, double *param, double *grad_param, 
                     free(dataMerged);
                     //MPI_Reduce(data+outputPointer, layerSize[layer-1], 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); // how to sum up the entire array
                 }
-           }
-            */
+            }
+
+            /* Update parameters */
+            for (int i = 0; i < num_param; i++) {
+                param[i] -= learning_rate * grad_param[i];
+            }
+
+
         }
     }
     free(data);
@@ -314,7 +311,7 @@ int main(int argc, char **argv) {
     printf("batch_Size: %d\n", batch_size);
 
     /* Set neural network parameters */
-    double lambda = 0, learning_rate = 0.0001;
+    double lambda = 0, learning_rate = 0.001;
     int Nlayers = 4;
     int layerSize[4] = {W*H,5*4,5*3,10};
     double *param, *grad_param;
