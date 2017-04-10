@@ -9,6 +9,7 @@
 #define MAX_ITER 100
 #define TOL 0.00000001
 #define TRAIN_SET_SIZE 20
+#define TEST_SET_SIZE 20
 
 
 void read_labels(const char filename[], int *array, int data_size) {
@@ -154,7 +155,6 @@ void backward(double *current_layer, int local_layer_size, double *prev_layer, i
     }
 /*
     double local_grad, dparam, above_grad = 0;
-
     for (int i = 0; i < local_layer_size; i++) { // only local layer
         // Compute local gradient (backpropagate the tanh activation function)
         local_grad = 1 - pow(current_layer[i],2);
@@ -302,9 +302,96 @@ void train(const char filename[], int* label, double *param, double *grad_param,
     free(images);
 }
 
-//void test() {
-//
-//}
+void test(const char filename[], int* label, double *param, int *layerSize, int Nlayers, int p, int P) {
+
+    int batch_size = 1;
+    int it, itTotal = 0, layer;
+    double local_reg_loss, global_reg_loss = 0.0, global_loss = 0.0;
+    int image_size = layerSize[0];
+
+    /* Allocate image data array */
+    double **images = malloc(batch_size * sizeof(*images));
+    for (size_t i = 0; i < batch_size; i++) {
+        images[i] = malloc(image_size * sizeof(*images[i]));
+    }
+
+    /* Allocate data array */
+    double *data = (double *) malloc(dataSize(layerSize,Nlayers)*sizeof(double));
+
+    /* Loop over batches */
+    for (it = 0; it < TEST_SET_SIZE; it++) {
+
+        /* Load image data */
+        read_csv(filename, images, image_size, batch_size, it);
+
+        /* Copy one image to the 1st layer of the data */
+        memcpy(data, images[0], image_size);
+
+        /* Forward pass */
+        for (layer = 1; layer < Nlayers; layer++) {
+            int inputPointer = dataInd(layer-1, 0, P, layerSize);
+            int outputPointer = dataInd(layer, p, P, layerSize);
+            int paramPointer = paramInd(layer, p, P, layerSize);
+            forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer, Nlayers-layer-1);
+            //MPI_Alltoall(data+outputPointer, local(layerSize[layer],p,P), MPI_DOUBLE, data+dataInd(layer+1, p, P, layerSize),);
+            double * dataMerged;
+            dataMerged = (double *) malloc(layerSize[layer]*sizeof(double));
+            int lsizes[P],lpointers[P];
+            for (int lp = 0; lp <P; lp++) {
+                lsizes[lp] = local(layerSize[layer],lp,P);
+                if (lp >0 ) {
+                    lpointers[lp] = lsizes[lp-1]+lpointers[lp-1];
+                } else {
+                    lpointers[lp] = 0;
+                }
+            }
+            int err = MPI_Allgatherv (data + outputPointer, local(layerSize[layer],p,P), MPI_DOUBLE,dataMerged, lsizes, lpointers,MPI_DOUBLE, MPI_COMM_WORLD) ;
+            memcpy( data +dataInd(layer, 0, P, layerSize), dataMerged, layerSize[layer]*sizeof(double));
+            free(dataMerged);
+        }
+
+        /* Softmax */
+        int probs_pointer = dataInd(Nlayers-1, 0, P, layerSize);
+        double sum = 0.0;
+
+        for (int i = 0; i < layerSize[Nlayers-1]; i++) {
+            sum += exp(data[probs_pointer+i]);
+        }
+        for (int i = 0; i < layerSize[Nlayers-1]; i++) {
+            /* Compute normalized probability of the correct class */
+            data[probs_pointer+i] = exp(data[probs_pointer+i])/sum;
+        }
+
+        /* Loss computation */
+        int num_param = paramSize(layerSize, Nlayers, p, P);
+
+        /* Compute the cross-entropy loss */
+
+        global_reg_loss = 0;
+        for (int i = 0 ; i < batch_size; i++) {
+            /* Add the log probabilities assigned to the correct classes */
+            global_loss += -log(data[probs_pointer + label[it]]);
+        }
+
+        /* Add the regularization loss */
+        //local_reg_loss = compute_regularization_loss(param, num_param, lambda); // use lambda = 0 to ignore regularization
+        if (p == 0) {
+            //MPI_Reduce(&local_reg_loss, &global_reg_loss, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+            global_loss += global_reg_loss;
+            //printf("total loss: %f\n", global_loss);
+        }
+
+    }
+
+    global_loss /= batch_size;
+    printf("total loss: %f\n", global_loss);
+
+    free(data);
+    for (size_t i = 0; i < batch_size; i++) {
+        free(images[i]);
+    }
+    free(images);
+}
 
 
 int main(int argc, char **argv) {
@@ -316,6 +403,7 @@ int main(int argc, char **argv) {
     int tag = 100;
     const char filename[] = "/Users/nyuad/Documents/workspaceC++/parallel/parallel_nn/mnist_data/train_images.csv";
     const char label_filename[] = "/Users/nyuad/Documents/workspaceC++/parallel/parallel_nn/mnist_data/train_labels.csv";
+    const char filename_test[] = "/Users/nyuad/Documents/workspaceC++/parallel/parallel_nn/mnist_data/test_images.csv";
 
 
 /* Initialize MPI */
@@ -338,10 +426,15 @@ int main(int argc, char **argv) {
     int layerSize[4] = {W*H,5*4,5*3,10};
     double *param, *grad_param;
     int *label;
+    int *test_label;
 
     /* Allocate memory and read labels */
     label = (int *) malloc(TRAIN_SET_SIZE * sizeof(int));
     read_labels(label_filename, label, TRAIN_SET_SIZE);
+
+    test_label = (int *) malloc(TEST_SET_SIZE * sizeof(int));
+    read_labels(filename_test, test_label, TEST_SET_SIZE);
+
 
     for (int i = 0; i < TRAIN_SET_SIZE; i++) {
         printf("label[%d]: %d", i, label[i]);
@@ -364,8 +457,7 @@ int main(int argc, char **argv) {
 
     /* NN */
     train(filename, label, param, grad_param, layerSize, Nlayers, p, P, batch_size, lambda, learning_rate);
-
-    //test();
+    test(filename_test, test_label, param, layerSize, Nlayers, p, P);
 
 /* print results */
     //for (i = 0; i < I; i++) {
