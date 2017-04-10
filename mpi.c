@@ -94,7 +94,7 @@ double compute_loss(double *probs, double *param, int label, int num_param, int 
     double local_loss = 0;
     /* Add the log probabilities assigned to the correct classes */
     //for (int i = 0 ; i < batch_size; i++) {
-    local_loss = (1 / batch_size) * -log(probs[label]);
+    local_loss = (1 / batch_size) * -log(probs[label]); // correction (dont do it on each processor)
     // Add the L2
     for (int i = 0; i < num_param; i++) {
         local_loss += lambda * pow(param[i], 2);
@@ -105,10 +105,26 @@ double compute_loss(double *probs, double *param, int label, int num_param, int 
 
 
 /* Backward pass and parameter update */
-void backward(double *current_layer, int local_layer_size, double *above_layer, int above_layer_size, int below_layer_size,
-              double *param, double learning_rate, double lambda) {
+void backward(double *current_layer, int local_layer_size, double *prev_layer, int prev_layer_size,
+              double *param, double lambda) {
     // using mini-batch (stochastic) gradient descent
 
+    //param_size = (prev_layer_size +1) * local_layer_size;
+    for (int i = 0; i < local_layer_size; i++) {
+        grad_param[i*(prev_layer_size +1)] = current_layer[i];
+        for (int j = 0; j < prev_layer_size; j++) { // entire next layer
+            grad_param[i*(prev_layer_size +1)+j+1] += current_layer[i] * prev_layer[j];
+        }    
+    }
+    for (int i = 0; i < prev_layer_size; i++) {
+        double localGrad = (1-pow(prev_layer[i],2));
+        prev_layer[i] = 0.0;
+        for (int k = 0; k < local_layer_size; k++) {
+            prev_layer[i] += current_layer[k]*param[k*(prev_layer_size +1)+i+1];
+        }
+        prev_layer[i] *= localGrad; 
+    }
+/*
     double local_grad, dparam, above_grad = 0;
 
     for (int i = 0; i < local_layer_size; i++) { // only local layer
@@ -132,15 +148,29 @@ void backward(double *current_layer, int local_layer_size, double *above_layer, 
             // Perform a parameter update
             param[(below_layer_size)* i + k] =+ - learning_rate * dparam;
         }
-    }
+    }*/
 }
 
 void train(double *data, int label, double *param, int *layerSize, int *localLayerSize, int Nlayers, int p, int P, int batch_size, double lambda, double learning_rate) {
+
     int it, itTotal = 0, layer;
     double local_loss, global_loss = 1;
     while (itTotal++ < MAX_ITER && global_loss > TOL) {
 
         for (it = 0; it < NUM_IT_PER_TEST; it++) {
+
+            image_size = layerSize[0];
+
+            /* Allocate array */
+            image = malloc(image_size); //malloc(batch_size * image_size);
+            //for (size_t i = 0; i < N; i++) {
+            //    images[i] = malloc(dataSize(layerSize, Nlayers) * sizeof(*data[i]));
+            //}
+            read_csv(filename, image, W * H, 1, 0);
+
+            double *data = (double *) malloc(dataSize(layerSize,Nlayers)*sizeof(double));
+            //copy image to the 1st layer of the data            
+
             /* Forward pass */
             for (layer = 1; layer < Nlayers; layer++) {
                 int inputPointer = dataInd(layer-1, 0, P, layerSize);
@@ -151,7 +181,7 @@ void train(double *data, int label, double *param, int *layerSize, int *localLay
             }
 
             /* Loss computation */
-            int probs_pointer = dataInd(Nlayers-1, p, P, layerSize);
+            int probs_pointer = dataInd(Nlayers-1, 0, P, layerSize); // correction
             int num_param = paramSize(layerSize, Nlayers, p, P);
             local_loss = compute_loss(data + probs_pointer, param, label, num_param, batch_size, lambda); // use lambda = 0 to ignore regularization
             if (p == 0) {
@@ -160,29 +190,25 @@ void train(double *data, int label, double *param, int *layerSize, int *localLay
             }
 
             /* Gradient computation for the last (score) layer */
-            double grad[layerSize[Nlayers-1]] = {0};
-            grad[label] -= 1;
+            data[probs_pointer+label] -= 1;
             for (int i = 0; i < layerSize[Nlayers-1]; i++) {
-                grad[i] += data[dataSize(layerSize, Nlayers) - (layerSize[Nlayers-1] - i)];
-                grad[i] /= batch_size; // todo check lectures why this is necessary
+                data[probs_pointer+i] /= batch_size; // todo check lectures why this is necessary
             }
 
             /* Backpropagation */
-            for (layer = Nlayers-2; layer > 0; layer--) {
-                int currentPointer = dataInd(layer, p, P, layerSize);
+            for (layer = Nlayers-1; layer > 0; layer--) {
+                int inputPointer = dataInd(layer, p, P, layerSize);
+                int outputPointer = dataInd(layer-1, 0, P, layerSize);
                 int paramPointer = paramInd(layer, p, P, layerSize);
 
-                if (layer == Nlayers-1) {
-                    backward(data+currentPointer, local(layerSize[layer],p,P), grad, layerSize[layer],
-                             layerSize[layer-1], param+paramPointer,learning_rate, lambda);
-                }
-                else {
-                    int abovePointer = dataInd(layer+1, p, P, layerSize);
-                    backward(data+currentPointer, local(layerSize[layer],p,P), data+abovePointer, layerSize[layer+1],
-                             layerSize[layer-1], param+paramPointer,learning_rate, lambda);
-                }
-                MPI_Alltoall(data[layer], data[]); // todo
+                int abovePointer = dataInd(layer+1, p, P, layerSize);
+                backward(data+inputPointer, local(layerSize[layer],p,P), data+outputPointer, layerSize[layer-1],
+                         param+paramPointer, lambda);
+                MPI_Reduce(data+outputPointer, layerSize[layer-1], 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); // how to sum up the entire array
             }
+
+            
+
         }
     }
 }
@@ -246,7 +272,7 @@ int main(int argc, char **argv) {
 
 /* Allocate memory for parameters */
     param = (double *) malloc(paramSize(layerSize, Nlayers, p, P) * sizeof(double));
-    //grad = (double *) malloc(paramSize(layerSize, Nlayers, p, P) * sizeof(double));
+    grad_param = (double *) malloc(paramSize(layerSize, Nlayers, p, P) * sizeof(double));
 
 /* Initialize a (pseudo-) random number generator */
     srandom(p + 1);
@@ -256,21 +282,11 @@ int main(int argc, char **argv) {
         param[i] = 0.01 * (double) random() / RAND_MAX;
     }
 
-    //data = (double *) malloc(dataSize(layerSize,Nlayers)*sizeof(double));
-
-/* Allocate array */
-    data = malloc(N + sizeof(*data));
-    for (size_t i = 0; i < N; i++) {
-        data[i] = malloc(dataSize(layerSize, Nlayers) * sizeof(*data[i]));
-    }
-    read_csv(filename, data, W * H, N, batch_index);
-
-
 
 /* NN */
-    train();
+    train(filename);
 
-    test();
+    //test();
 
 /* print results */
     //for (i = 0; i < I; i++) {
