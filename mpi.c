@@ -204,6 +204,20 @@ void train(const char filename[], int label, double *param, double *grad_param, 
                 int paramPointer = paramInd(layer, p, P, layerSize);
                 forward(data+inputPointer, layerSize[layer-1], data+outputPointer, local(layerSize[layer],p,P), param+paramPointer, Nlayers-layer-1);
                 //MPI_Alltoall(data+outputPointer, local(layerSize[layer],p,P), MPI_DOUBLE, data+dataInd(layer+1, p, P, layerSize),);
+                double * dataMerged;
+                dataMerged = (double *) malloc(layerSize[layer]*sizeof(double));
+                int lsizes[P],lpointers[P];
+                for (int lp = 0; lp <P; lp++) {
+                    lsizes[lp] = local(layerSize[layer],lp,P);
+                    if (i >0 ) {
+                        lpointers[lp] = lsizes[lp-1]+lpointers[lp-1];
+                    } else {
+                        lpointers[lp] = 0;
+                    }
+                }
+                int err = MPI_Allgatherv (data + outputPointer, local(layerSize[layer],p,P), MPI_DOUBLE,dataMerged, lsizes, lpointers,MPI_DOUBLE, MPI_COMM_WORLD) ;
+                memcpy( data +dataInd(layer, 0, P, layerSize), dataMerged, layerSize[layer]*sizeof(double));
+                free(dataMerged);
             }
 
             /* Loss computation */
