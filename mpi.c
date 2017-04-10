@@ -6,10 +6,30 @@
 /* Use MPI */
 #include "mpi.h"
 
-#define MAX_ITER 30
+#define MAX_ITER 100
 #define TOL 0.00000001
-#define NUM_IT_PER_TEST 20
+#define TRAIN_SET_SIZE 20
 
+
+void read_labels(const char filename[], int *array, int data_size) {
+    FILE *file = fopen(filename, "r");
+    if (file) {
+        size_t i;
+        char buffer[4], *ptr;
+        /* Read each line from the file. */
+        for (i = 0; fgets(buffer, sizeof buffer, file); ++i) {
+            if (i < data_size) {
+                /* Parse the comma-separated values from each line into 'array'. */
+                ptr = buffer;
+                array[i] = (int) strtol(ptr, &ptr, 10);
+            }
+        }
+        fclose(file);
+    }
+    else {
+        perror(filename);
+    }
+}
 
 void read_csv(const char filename[], double **array, int data_size, int batch_size, int batch_ind) {
     FILE *file = fopen(filename, "r");
@@ -160,9 +180,9 @@ void backward(double *current_layer, int local_layer_size, double *prev_layer, i
 }
 
 
-void train(const char filename[], int label, double *param, double *grad_param, int *layerSize, int Nlayers, int p, int P, int batch_size, double lambda, double learning_rate) {
+void train(const char filename[], int* label, double *param, double *grad_param, int *layerSize, int Nlayers, int p, int P, int batch_size, double lambda, double learning_rate) {
 
-    int it, itTotal = 0, layer;
+    int img, itTotal = 0, layer;
     double local_reg_loss, global_reg_loss, global_loss = 1;
     int image_size = layerSize[0];
 
@@ -177,11 +197,11 @@ void train(const char filename[], int label, double *param, double *grad_param, 
 
     while (itTotal++ < MAX_ITER && global_loss > TOL) {
 
-        /* Loop over batches */
-        for (it = 0; it < NUM_IT_PER_TEST; it++) {
+        /* Loop over images in training set */
+        for (img = 0; img < TRAIN_SET_SIZE; img++) {
 
             /* Load image data */
-            read_csv(filename, images, image_size, batch_size, it);
+            read_csv(filename, images, image_size, batch_size, img);
 
             /* Copy one image to the 1st layer of the data */
             memcpy(data, images[0], image_size);
@@ -229,7 +249,7 @@ void train(const char filename[], int label, double *param, double *grad_param, 
             global_reg_loss = 0;
             for (int i = 0 ; i < batch_size; i++) {
                 /* Add the log probabilities assigned to the correct classes */
-                global_loss += -log(data[probs_pointer + label]);
+                global_loss += -log(data[probs_pointer + label[img]]);
             }
             global_loss /= batch_size;
 
@@ -242,7 +262,8 @@ void train(const char filename[], int label, double *param, double *grad_param, 
             }
 
             /* Gradient computation for the last (score) layer */
-            data[probs_pointer+label] -= 1;
+            data[probs_pointer + label[img]] -= 1;
+
             for (int i = 0; i < layerSize[Nlayers-1]; i++) {
                 data[probs_pointer+i] /= batch_size;
                 //printf("%3f ", data[probs_pointer+i]);
@@ -268,7 +289,7 @@ void train(const char filename[], int label, double *param, double *grad_param, 
 
             /* Update parameters */
             for (int i = 0; i < num_param; i++) {
-                param[i] -= learning_rate * grad_param[i];
+                param[i] -= learning_rate * grad_param[i] / batch_size;
             }
 
 
@@ -294,6 +315,7 @@ int main(int argc, char **argv) {
     MPI_Status status;
     int tag = 100;
     const char filename[] = "/Users/nyuad/Documents/workspaceC++/parallel/parallel_nn/mnist_data/train_images.csv";
+    const char label_filename[] = "/Users/nyuad/Documents/workspaceC++/parallel/parallel_nn/mnist_data/train_labels.csv";
 
 
 /* Initialize MPI */
@@ -315,7 +337,15 @@ int main(int argc, char **argv) {
     int Nlayers = 4;
     int layerSize[4] = {W*H,5*4,5*3,10};
     double *param, *grad_param;
-    int label = 0; //int *labels;
+    int *label;
+
+    /* Allocate memory and read labels */
+    label = (int *) malloc(TRAIN_SET_SIZE * sizeof(int));
+    read_labels(label_filename, label, TRAIN_SET_SIZE);
+
+    for (int i = 0; i < TRAIN_SET_SIZE; i++) {
+        printf("label[%d]: %d", i, label[i]);
+    }
 
     /* Allocate memory for parameters */
     param = (double *) malloc(paramSize(layerSize, Nlayers, p, P) * sizeof(double));
