@@ -124,7 +124,7 @@ double compute_regularization_loss(double *param, int num_param, double lambda) 
 
 /* Backward pass and parameter update */
 /* void backward(double *current_layer, int local_layer_size, double *prev_layer, int prev_layer_size,
-              double *param, double lambda) {
+              double *param, int layer,double lambda) {
     // using mini-batch (stochastic) gradient descent
     // todo add regularization
 
@@ -134,15 +134,17 @@ double compute_regularization_loss(double *param, int num_param, double lambda) 
         for (int j = 0; j < prev_layer_size; j++) { // entire next layer
             grad_param[i*(prev_layer_size +1)+j+1] += current_layer[i] * prev_layer[j];
         }    
-    }
-    for (int i = 0; i < prev_layer_size; i++) {
-        double localGrad = (1-pow(prev_layer[i],2));
-        prev_layer[i] = 0.0;
-        for (int k = 0; k < local_layer_size; k++) {
-            prev_layer[i] += current_layer[k]*param[k*(prev_layer_size +1)+i+1];
-        }
-        prev_layer[i] *= localGrad; 
-    } */
+    } 
+    if (layer>1) {
+        for (int i = 0; i < prev_layer_size; i++) {
+            double localGrad = (1-pow(prev_layer[i],2));
+            prev_layer[i] = 0.0;
+            for (int k = 0; k < local_layer_size; k++) {
+                prev_layer[i] += current_layer[k]*param[k*(prev_layer_size +1)+i+1];
+            }
+            prev_layer[i] *= localGrad; 
+        } 
+    }*/
 /*
     double local_grad, dparam, above_grad = 0;
 
@@ -262,9 +264,16 @@ void train(const char filename[], int label, double *param, double *grad_param, 
 
                 int abovePointer = dataInd(layer+1, p, P, layerSize);
                 backward(data+inputPointer, local(layerSize[layer],p,P), data+outputPointer, layerSize[layer-1],
-                         param+paramPointer, lambda);
-                MPI_Reduce(data+outputPointer, layerSize[layer-1], 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); // how to sum up the entire array
-            }
+                         param+paramPointer, layer,lambda);
+                if (layer > 1) {
+                    double * dataMerged;
+                    dataMerged = (double *) malloc(layerSize[layer-1]*sizeof(double));
+                    int res = MPI_Allreduce(data+outputPointer,dataMerged,layerSize[layer-1],MPI_DOUBLE, MPI_SUM,MPI_COMM_WORLD);
+                    memcpy( data +dataInd(layer-1, 0, P, layerSize), dataMerged, layerSize[layer-1]*sizeof(double));
+                    free(dataMerged);
+                    //MPI_Reduce(data+outputPointer, layerSize[layer-1], 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); // how to sum up the entire array
+                }
+           }
             */
         }
     }
