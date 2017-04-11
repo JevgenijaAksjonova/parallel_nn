@@ -205,6 +205,9 @@ void train(const char filename[], int* label, double *param, double *grad_param,
             global_loss = 0;
             global_reg_loss = 0;
 
+            /* Re-set gradients to 0*/
+            memset(grad_param, 0, paramSize(layerSize, Nlayers, p, P) * sizeof(double));
+
             /* Load images in batch */
             read_images(filename, images, image_size, batch_size, batch_index);
 
