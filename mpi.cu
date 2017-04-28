@@ -96,7 +96,7 @@ int dataInd(int layer, int *layerSize) {
 /* Forward pass */
 __global__
 void forward(double *input, int inputSize, double *output, int outputSize, double *param, int fun) {
-    int i = threadIdx.x;
+    int i = blockIdx.x;
 
     // Initialize output with the bias term
     output[i] = param[(inputSize +1)* i]; 
@@ -131,7 +131,7 @@ __global__
 void backward_part1(double *current_layer, int layer_size, double *prev_layer, int prev_layer_size,
               double *param, double *grad_param, int layer,double lambda) {
     
-    int i = threadIdx.x;
+    int i = blockIdx.x;
     // Update parameters
     grad_param[i*(prev_layer_size +1)] += 2.0*current_layer[i]; // multiply by 2 for faster training/better convergence
     for (int j = 0; j < prev_layer_size; j++) {
@@ -144,7 +144,7 @@ __global__
 void backward_part2(double *current_layer, int layer_size, double *prev_layer, int prev_layer_size,
               double *param, double *grad_param, int layer,double lambda) {
     
-    int i = threadIdx.x;
+    int i = blockIdx.x;
     // backprapogate partial derivatives
     if (FUNCTION_TYPE == 0) {
         double localGrad = (1-pow(prev_layer[i],2)); // tanh derivative
@@ -213,8 +213,8 @@ void train(const char filename[], int* label, double *d_param, double *d_grad_pa
                     int inputPointer = dataInd(layer - 1, layerSize);
                     int outputPointer = dataInd(layer, layerSize);
                     int paramPointer = paramInd(layer, layerSize);
-                    dim3 dimBlock( layerSize[layer], 1 );
-                    dim3 dimGrid( 1, 1 );
+                    dim3 dimBlock( 1,1,1 );
+                    dim3 dimGrid(layerSize[layer],1,1);
                     forward<<<dimGrid, dimBlock>>>(d_data + inputPointer, layerSize[layer - 1], d_data + outputPointer, layerSize[layer],
                             d_param + paramPointer, Nlayers - layer - 1);
                 }
@@ -248,13 +248,13 @@ void train(const char filename[], int* label, double *d_param, double *d_grad_pa
                     int inputPointer = dataInd(layer, layerSize);
                     int outputPointer = dataInd(layer - 1, layerSize);
                     int paramPointer = paramInd(layer, layerSize);
-                    dim3 dimBlock( layerSize[layer], 1 );
-                    dim3 dimGrid( 1, 1 );
+                    dim3 dimBlock( 1, 1, 1 );
+                    dim3 dimGrid( layerSize[layer], 1, 1 );
                     backward_part1<<<dimGrid, dimBlock>>>(d_data + inputPointer, layerSize[layer], d_data + outputPointer, layerSize[layer - 1],
                              d_param + paramPointer, d_grad_param + paramPointer, layer, lambda);
                     if (layer > 1) {
-                        dim3 dimBlock( layerSize[layer-1], 1 );
-                        dim3 dimGrid( 1, 1 );
+                        dim3 dimBlock( 1, 1, 1 );
+                        dim3 dimGrid( layerSize[layer-1], 1, 1 );
                         backward_part2<<<dimGrid, dimBlock>>>(d_data + inputPointer, layerSize[layer], d_data + outputPointer, layerSize[layer - 1],
                              d_param + paramPointer, d_grad_param + paramPointer, layer, lambda);
                     }
