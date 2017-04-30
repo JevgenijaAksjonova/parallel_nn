@@ -4,7 +4,7 @@
  * Authors: Jevgenija Aksjonova (jevaks@kth.se)
  *          Beatrice Ionascu (bionascu@kth.se)
  *
- * Last changed: 04/28/2017
+ * Last changed: 04/30/2017
  */
 
 #include <stdio.h>
@@ -396,7 +396,7 @@ int main(int argc, char **argv) {
 
     /* Read number of epochs from command line */
     if (argc < 2) {
-        printf("No batch size given \n");
+        printf("Number of epochs is not given \n");
         exit(1);
     }
     epochs = atoi(argv[1]);
@@ -404,7 +404,7 @@ int main(int argc, char **argv) {
     /* Set neural network parameters */
     double lambda = 0.0005, learning_rate = 0.01;
     int num_layers = 4;
-    int layerSize[4] = {W*H, 300, 100, 10};
+    int layer_size[4] = {W*H, 300, 100, 10};
     double *param, *grad_param;
     int *train_label, *test_label;
 
@@ -424,8 +424,8 @@ int main(int argc, char **argv) {
     read_labels(test_labels_filename, test_label, TEST_SET_SIZE);
 
     /* Allocate memory for parameters and gradients */
-    param = (double *) malloc(param_size(layerSize, num_layers, p, P) * sizeof(double));
-    grad_param = (double *) malloc(param_size(layerSize, num_layers, p, P) * sizeof(double));
+    param = (double *) malloc(param_size(layer_size, num_layers, p, P) * sizeof(double));
+    grad_param = (double *) malloc(param_size(layer_size, num_layers, p, P) * sizeof(double));
 
     /* Initialize a (pseudo-) random number generator */
     srandom(p + 1);
@@ -433,24 +433,24 @@ int main(int argc, char **argv) {
     /* Initialize parameters using "xavier" initialization */
     int layer, i, j;
     for (layer = 1; layer < num_layers; layer++) {
-        double a = sqrt(3.0/(float)layerSize[layer-1]); // uniform interval limit
-        int param_pointer = param_ind(layer, p, P, layerSize);
-        for (i = 0; i < local(layerSize[layer], p, P); i++) {
-            param[param_pointer + i * (layerSize[layer - 1] + 1)] = 0.0; // bias
-            for (j = 1; j < layerSize[layer - 1] +1; j++) {
-                param[param_pointer + i * (layerSize[layer - 1] + 1) + j] = 2.0 * a * (double) random() / RAND_MAX - a;
+        double a = sqrt(3.0/(float)layer_size[layer-1]); // uniform interval limit
+        int param_pointer = param_ind(layer, p, P, layer_size);
+        for (i = 0; i < local(layer_size[layer], p, P); i++) {
+            param[param_pointer + i * (layer_size[layer - 1] + 1)] = 0.0; // bias
+            for (j = 1; j < layer_size[layer - 1] +1; j++) {
+                param[param_pointer + i * (layer_size[layer - 1] + 1) + j] = 2.0 * a * (double) random() / RAND_MAX - a;
             }
         }
     }
 
     /* Initialize gradients with 0 */
-    memset(grad_param, 0, param_size(layerSize, num_layers, p, P) * sizeof(double));
+    memset(grad_param, 0, param_size(layer_size, num_layers, p, P) * sizeof(double));
 
     /* Train network */
-    train(train_images_filename, train_label, param, grad_param, layerSize, num_layers, p, P, epochs, lambda, learning_rate);
+    train(train_images_filename, train_label, param, grad_param, layer_size, num_layers, p, P, epochs, lambda, learning_rate);
 
     /* Test network */
-    test(test_images_filename, test_label, param, layerSize, num_layers, p, P);
+    test(test_images_filename, test_label, param, layer_size, num_layers, p, P);
 
     /* Deallocate arrays */
     free(param);
