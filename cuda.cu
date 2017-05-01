@@ -107,25 +107,31 @@ int data_ind(int layer, int *layer_size) {
 /* Forward pass */
 __global__
 void forward(double *input, int inputSize, double *output, int outputSize, double *param, int fun) {
-    size_t i, j;
-    i = blockIdx.x;
 
-    /* Initialize output with the bias term */
-    output[i] = param[(inputSize + 1) * i];
-    for (j = 0; j < inputSize; j++) {
-        // Add weighted inputs
-        output[i] += param[(inputSize +1)* i + j+1] * input[j];
-    }
-    /* Activation */
-    if (fun > 0) {
-        if (FUNCTION_TYPE == 0) {
-            output[i] = tanh(output[i]);
+    size_t i, j;
+    double l_output;
+    i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < outputSize ) {
+
+        /* Initialize output with the bias term */
+        l_output = param[i];
+        for (j = 0; j < inputSize; j++) {
+            // Add weighted inputs
+            l_output += param[(j+1)*outputSize + i] * input[j];
         }
-        else if (FUNCTION_TYPE == 1) { // relu function
-            if (output[i] <= 0) {
-                output[i] = 0.0;
+        /* Activation */
+        if (fun > 0) {
+            if (FUNCTION_TYPE == 0) {
+                l_output = tanh(l_output);
+            }
+            else if (FUNCTION_TYPE == 1) { // relu function
+                if (l_output <= 0) {
+                    l_output = 0.0;
+                }
             }
         }
+        output[i] = l_output;
     }
 }
 
@@ -136,45 +142,58 @@ void backward_part1(double *current_layer, int layer_size, double *prev_layer, i
               double *param, double *grad_param, int layer,double lambda) {
     
     size_t i, j;
-    i = blockIdx.x;
-    // Update parameters
-    grad_param[i*(prev_layer_size +1)] += current_layer[i];
-    for (j = 0; j < prev_layer_size; j++) {
-        grad_param[i * (prev_layer_size + 1) + j + 1] += current_layer[i] * prev_layer[j] + 
-                    2.0 * lambda * param[i * (prev_layer_size + 1) + j + 1]; // regularization
+    double l_current_layer;
+    i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < layer_size) {
+        l_current_layer = current_layer[i];
+        // Update parameters
+        grad_param[i] += l_current_layer;
+        for (j = 0; j < prev_layer_size; j++) {
+            grad_param[(j+1) * layer_size + i ] += l_current_layer * prev_layer[j] + 
+                        2.0 * lambda * param[(j+1) * layer_size + i]; // regularization
+        }
     }
 }
 
 __global__
 void backward_part2(double *current_layer, int layer_size, double *prev_layer, int prev_layer_size,
               double *param, double *grad_param, int layer,double lambda) {
-    
+
     size_t i, k;
-    i = blockIdx.x;
-    // backprapogate partial derivatives
-    if (FUNCTION_TYPE == 0) {
-        double localGrad = (1-pow(prev_layer[i],2)); // tanh derivative
-        prev_layer[i] = 0.0; 
-        for (k = 0; k < layer_size; k++) {
-            prev_layer[i] += current_layer[k] * param[k * (prev_layer_size +1) + i + 1];
-        }
-        prev_layer[i] *= localGrad;
-    } else if (FUNCTION_TYPE == 1) {
-        if (prev_layer[i] >0.0) {
-            prev_layer[i] = 0.0;
+    double l_prev_layer;
+    i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < prev_layer_size ) {
+        l_prev_layer = prev_layer[i];
+        // backprapogate partial derivatives
+        if (FUNCTION_TYPE == 0) {
+            double localGrad = (1-pow(l_prev_layer,2)); // tanh derivative
+            l_prev_layer = 0.0; 
             for (k = 0; k < layer_size; k++) {
-                prev_layer[i] += current_layer[k] * param[k * (prev_layer_size +1) + i + 1];
+                l_prev_layer += current_layer[k] * param[(i+1) * layer_size + k];
             }
-        } else {
-            prev_layer[i] = 0.0;
+            l_prev_layer *= localGrad;
+        } else if (FUNCTION_TYPE == 1) {
+            if (l_prev_layer >0.0) {
+                l_prev_layer = 0.0;
+                for (k = 0; k < layer_size; k++) {
+                    l_prev_layer += current_layer[k] * param[(i+1) * layer_size + k];
+                }
+            } else {
+                l_prev_layer = 0.0;
+            }
         }
+        prev_layer[i] = l_prev_layer;
     }
 }
 
 __global__
 void update_param(double *param, double *grad_param, int num_param, double learning_rate, int batch_size) {
-    int i = blockIdx.x;
-    param[i] = param[i] - learning_rate * grad_param[i] / (float)batch_size;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < num_param) {
+        param[i] = param[i] - learning_rate * grad_param[i] / (float)batch_size;
+    }
 }
 
 /* Train the network */
@@ -220,8 +239,8 @@ void train(const char filename[], int* label, double *d_param, double *d_grad_pa
                     input_pointer = data_ind(layer - 1, layer_size);
                     output_pointer = data_ind(layer, layer_size);
                     param_pointer = param_ind(layer, layer_size);
-                    dim3 dimBlock( 1,1,1 );
-                    dim3 dimGrid(layer_size[layer],1,1);
+                    dim3 dimBlock( 128,1,1 );
+                    dim3 dimGrid(ceil((float)layer_size[layer]/128.0),1,1);
                     forward<<<dimGrid, dimBlock>>>(d_data + input_pointer, layer_size[layer - 1], d_data + output_pointer, layer_size[layer],
                             d_param + param_pointer, num_layers - layer - 1);
                 }
@@ -254,13 +273,13 @@ void train(const char filename[], int* label, double *d_param, double *d_grad_pa
                     input_pointer = data_ind(layer, layer_size);
                     output_pointer = data_ind(layer - 1, layer_size);
                     param_pointer = param_ind(layer, layer_size);
-                    dim3 dimBlock( 1, 1, 1 );
-                    dim3 dimGrid( layer_size[layer], 1, 1 );
+                    dim3 dimBlock( 128, 1, 1 );
+                    dim3 dimGrid( ceil((float)layer_size[layer]/128.0), 1, 1 );
                     backward_part1<<<dimGrid, dimBlock>>>(d_data + input_pointer, layer_size[layer], d_data + output_pointer, layer_size[layer - 1],
                              d_param + param_pointer, d_grad_param + param_pointer, layer, lambda);
                     if (layer > 1) {
-                        dim3 dimBlock( 1, 1, 1 );
-                        dim3 dimGrid( layer_size[layer - 1], 1, 1 );
+                        dim3 dimBlock( 128, 1, 1 );
+                        dim3 dimGrid( ceil((float)layer_size[layer - 1]/128.0), 1, 1 );
                         backward_part2<<<dimGrid, dimBlock>>>(d_data + input_pointer, layer_size[layer], d_data + output_pointer, layer_size[layer - 1],
                              d_param + param_pointer, d_grad_param + param_pointer, layer, lambda);
                     }
@@ -268,8 +287,8 @@ void train(const char filename[], int* label, double *d_param, double *d_grad_pa
             }
 
             /* Update parameters using gradient averaged over batch)*/
-            dim3 dimBlock(1, 1, 1 );
-            dim3 dimGrid( num_param, 1 ,1 );
+            dim3 dimBlock(512, 1, 1 );
+            dim3 dimGrid( ceil((float)num_param/512.0), 1 ,1 );
             update_param<<<dimGrid, dimBlock>>>(d_param, d_grad_param, num_param, learning_rate, BATCH_SIZE);
 
             /* Compute global loss averaged over batch */
@@ -314,8 +333,8 @@ void test(const char filename[], int* label, double *d_param, int *layer_size, i
             input_pointer = data_ind(layer - 1, layer_size);
             output_pointer = data_ind(layer, layer_size);
             param_pointer = param_ind(layer, layer_size);
-            dim3 dimBlock( 1, 1, 1 );
-            dim3 dimGrid( layer_size[layer], 1, 1 );
+            dim3 dimBlock( 128, 1, 1 );
+            dim3 dimGrid( ceil((float)layer_size[layer]/128.0), 1, 1 );
             forward<<<dimGrid, dimBlock>>>(d_data + input_pointer, layer_size[layer - 1], d_data + output_pointer, layer_size[layer],
                     d_param + param_pointer, num_layers - layer - 1);
         }
@@ -404,9 +423,11 @@ int main(int argc, char **argv) {
         double a = sqrt(3.0/(float)layer_size[layer-1]); // uniform interval limit
         int param_pointer = param_ind(layer, layer_size);
         for (i = 0; i < layer_size[layer]; i++) {
-            h_param[param_pointer + i * (layer_size[layer - 1] + 1)] = 0.0; // bias
-            for (j = 1; j < layer_size[layer - 1] +1; j++) {
-                h_param[param_pointer + i * (layer_size[layer - 1] + 1) + j] = 2.0 * a * (double) random() / RAND_MAX - a;
+            h_param[param_pointer + i] = 0.0; // bias
+        }
+        for (j = 1; j < layer_size[layer - 1] +1; j++) {
+            for (i = 0; i < layer_size[layer]; i++) {
+                h_param[param_pointer + j * layer_size[layer] + i] = 2.0 * a * (double) random() / RAND_MAX - a;
             }
         }
     }
